@@ -1,106 +1,131 @@
-import boto3
-
-# Initialize the Boto3 clients for the various AWS services
+provider "aws" {
+  region = "us-west-2" # Substitua pela região desejada
+}
 
 # Route 53 (DNS)
-route53 = boto3.client('route53')
+resource "aws_route53_zone" "healthtrack_zone" {
+  name = "healthtrack.com"
+}
 
-# ELB (Load Balancer)
-elb = boto3.client('elbv2')
+# Security Group para os Servidores EC2 e Load Balancer
+resource "aws_security_group" "healthtrack_sg" {
+  name_prefix = "healthtrack-sg"
+  
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-# EC2 (App Servers)
-ec2 = boto3.client('ec2')
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-# SNS (Notification Queue)
-sns = boto3.client('sns')
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
 
-# Lambda (Processors)
-lambda_client = boto3.client('lambda')
+# Load Balancer (ELB)
+resource "aws_lb" "healthtrack_lb" {
+  name               = "healthtrack-lb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.healthtrack_sg.id]
+  subnets            = ["subnet-0123456789abcdef0", "subnet-abcdef0123456789"] # Substitua pelos seus Subnets
 
-# S3 (Health Data Bucket)
-s3 = boto3.client('s3')
+  enable_deletion_protection = false
+}
 
-# RDS (User Data DB)
-rds = boto3.client('rds')
+# EC2 Instances (App Servers)
+resource "aws_instance" "app_server" {
+  count = 3
+  
+  ami           = "ami-0abcdef1234567890" # Substitua pela AMI correta
+  instance_type = "t2.micro"
+  key_name      = "healthtrack-keypair" # Substitua pela sua keypair
 
-# Example of creating resources similar to the diagram:
+  vpc_security_group_ids = [aws_security_group.healthtrack_sg.id]
+  subnet_id              = "subnet-0123456789abcdef0" # Substitua pelo seu Subnet
+  
+  tags = {
+    Name = "HealthTrackAppServer-${count.index + 1}"
+  }
+}
 
-# Creating a Route 53 hosted zone (DNS)
-response = route53.create_hosted_zone(
-    Name='healthtrack.com',
-    CallerReference='unique-string',
-    HostedZoneConfig={
-        'Comment': 'Hosted zone for HealthTrack architecture',
-        'PrivateZone': False
-    }
-)
+# SNS Topic (Notification Queue)
+resource "aws_sns_topic" "healthtrack_notifications" {
+  name = "HealthTrackNotifications"
+}
 
-# Creating a Load Balancer
-response = elb.create_load_balancer(
-    Name='healthtrack-lb',
-    Subnets=['subnet-0123456789abcdef0', 'subnet-abcdef0123456789'],
-    SecurityGroups=['sg-0123456789abcdef0'],
-    Scheme='internet-facing',
-    Tags=[
-        {
-            'Key': 'Name',
-            'Value': 'HealthTrackLB'
-        },
-    ],
-    Type='application',
-    IpAddressType='ipv4'
-)
+# Lambda Functions (Processors)
+resource "aws_lambda_function" "activity_processor" {
+  function_name = "ActivityProcessor"
+  s3_bucket     = "healthtrack-lambda-code" # Substitua pelo seu bucket S3 onde o código Lambda está armazenado
+  s3_key        = "activity_processor.zip"
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.8"
+  role          = "arn:aws:iam::123456789012:role/lambda-execution-role" # Substitua pelo ARN do papel IAM correto
 
-# Launching EC2 instances (App Servers)
-instances = ec2.run_instances(
-    ImageId='ami-0abcdef1234567890',
-    InstanceType='t2.micro',
-    KeyName='healthtrack-keypair',
-    MinCount=3,
-    MaxCount=3,
-    SecurityGroupIds=['sg-0123456789abcdef0'],
-    TagSpecifications=[
-        {
-            'ResourceType': 'instance',
-            'Tags': [{'Key': 'Name', 'Value': 'HealthTrackAppServer'}]
-        },
-    ],
-    SubnetId='subnet-0123456789abcdef0'
-)
+  timeout   = 60
+  memory_size = 128
 
-# Creating SNS topic (Notification Queue)
-sns_topic = sns.create_topic(Name='HealthTrackNotifications')
+  description = "Activity Processor for HealthTrack"
+}
 
-# Creating Lambda functions (Processors)
-for processor in ['Activity', 'Sleep', 'Hydration']:
-    lambda_response = lambda_client.create_function(
-        FunctionName=f'{processor}Processor',
-        Runtime='python3.8',
-        Role='arn:aws:iam::123456789012:role/lambda-execution-role',
-        Handler='lambda_function.lambda_handler',
-        Code={
-            'S3Bucket': 'healthtrack-lambda-code',
-            'S3Key': f'{processor.lower()}_processor.zip'
-        },
-        Description=f'{processor} Processor for HealthTrack',
-        Timeout=60,
-        MemorySize=128
-    )
+resource "aws_lambda_function" "sleep_processor" {
+  function_name = "SleepProcessor"
+  s3_bucket     = "healthtrack-lambda-code"
+  s3_key        = "sleep_processor.zip"
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.8"
+  role          = "arn:aws:iam::123456789012:role/lambda-execution-role"
 
-# Creating an S3 bucket (Health Data Bucket)
-s3.create_bucket(Bucket='healthtrack-data-bucket')
+  timeout   = 60
+  memory_size = 128
 
-# Creating an RDS instance (User Data DB)
-rds.create_db_instance(
-    DBInstanceIdentifier='healthtrack-db',
-    AllocatedStorage=20,
-    DBName='HealthTrackDB',
-    Engine='mysql',
-    MasterUsername='admin',
-    MasterUserPassword='yourpassword',
-    DBInstanceClass='db.t2.micro',
-    VpcSecurityGroupIds=['sg-0123456789abcdef0'],
-    AvailabilityZone='us-west-2a'
-)
+  description = "Sleep Processor for HealthTrack"
+}
 
-print("HealthTrack Architecture setup complete.")
+resource "aws_lambda_function" "hydration_processor" {
+  function_name = "HydrationProcessor"
+  s3_bucket     = "healthtrack-lambda-code"
+  s3_key        = "hydration_processor.zip"
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.8"
+  role          = "arn:aws:iam::123456789012:role/lambda-execution-role"
+
+  timeout   = 60
+  memory_size = 128
+
+  description = "Hydration Processor for HealthTrack"
+}
+
+# S3 Bucket (Health Data Bucket)
+resource "aws_s3_bucket" "healthtrack_data_bucket" {
+  bucket = "healthtrack-data-bucket"
+}
+
+# RDS Instance (User Data DB)
+resource "aws_db_instance" "healthtrack_db" {
+  identifier        = "healthtrack-db"
+  allocated_storage = 20
+  storage_type      = "gp2"
+  engine            = "mysql"
+  engine_version    = "5.7"
+  instance_class    = "db.t2.micro"
+  name              = "HealthTrackDB"
+  username          = "admin"
+  password          = "yourpassword" # Substitua pela senha desejada
+  skip_final_snapshot = true
+
+  vpc_security_group_ids = [aws_security_group.healthtrack_sg.id]
+  availability_zone      = "us-west-2a" # Substitua pela zona de disponibilidade desejada
+}

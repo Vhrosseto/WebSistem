@@ -5,7 +5,7 @@ from diagrams.aws.network import ELB, Route53
 from diagrams.aws.storage import S3
 from diagrams.aws.integration import SNS
 
-with Diagram("HealthTrack Architecture", show=False):
+with Diagram("HealthTrack", show=False):
     dns = Route53("DNS")
     load_balancer = ELB("Load Balancer")
     
